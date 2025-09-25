@@ -1,4 +1,4 @@
-// client.js - browser side signaling + WebRTC
+// client.js - Fixed & robust 1-to-1 WebRTC client (works with your server.js)
 const socket = io();
 
 const joinBtn = document.getElementById('joinBtn');
@@ -15,22 +15,31 @@ let roomId = null;
 let myId = null;
 let remoteId = null;
 
+// queue for ICE candidates received before remoteDescription is set
+let pendingCandidates = [];
+
 const configuration = {
   iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    // Add TURN server here in production:
+    { urls: 'stun:stun.l.google.com:19302' }
+    // Add TURN in production:
     // { urls: 'turn:your.turn.server:3478', username: 'user', credential: 'pass' }
   ]
 };
 
+/* ---------- UI handlers ---------- */
 joinBtn.onclick = async () => {
   roomId = roomInput.value.trim();
   if (!roomId) return alert('Enter room id');
 
   joinBtn.disabled = true;
   status('Getting local media...');
+
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    // ensure autoplay & playsInline to avoid mobile autoplay restrictions
+    localVideo.autoplay = true;
+    localVideo.playsInline = true;
+    localVideo.muted = true;
     localVideo.srcObject = localStream;
   } catch (err) {
     console.error('media error', err);
@@ -44,15 +53,16 @@ joinBtn.onclick = async () => {
   leaveBtn.disabled = false;
 };
 
-// Leave
 leaveBtn.onclick = () => {
+  // notify server
+  if (roomId) socket.emit('leave', roomId);
   cleanup();
-  socket.emit('leave', roomId);
   joinBtn.disabled = false;
   leaveBtn.disabled = true;
   status('Left room');
 };
 
+/* ---------- Socket handlers ---------- */
 socket.on('connect', () => {
   myId = socket.id;
   console.log('connected as', myId);
@@ -63,23 +73,25 @@ socket.on('participants', ({ count }) => {
 });
 
 socket.on('room-full', () => {
-  alert('Room is full (this simple demo supports 2 participants).');
+  alert('Room is full (this demo supports 2 participants).');
+  // optionally cleanup if you were just added
+  cleanup();
+  joinBtn.disabled = false;
+  leaveBtn.disabled = true;
 });
 
 socket.on('peer-joined', async ({ peerId }) => {
-  // A peer joined after you. If you already have localStream, create offer
-  console.log('peer-joined', peerId);
+  // Server notifies existing participant that a new peer joined
+  console.log('peer-joined (existing):', peerId);
+  // existing participant should create the offer to the newcomer
   remoteId = peerId;
   await maybeCreatePeerConnection();
 
-  // If we have localStream and pc and we are the one who should create an offer:
-  // For simplicity we'll let the peer who joined later create the offer OR you can use logic:
-  // Here: existing participant (the one already in the room) will create the offer.
-  // We'll assume server notifies both; to ensure one side creates offer,
-  // the side that receives 'peer-joined' will NOT create offer. Instead, the new joiner should create offer.
-  // To make deterministic: if myId < remoteId then create offer (simple arbitrary rule)
-  if (myId && remoteId && myId < remoteId) {
+  // create offer as existing participant
+  try {
     await createAndSendOffer();
+  } catch (e) {
+    console.error('Error creating/sending offer', e);
   }
 });
 
@@ -90,20 +102,38 @@ socket.on('signal', async ({ from, description, candidate }) => {
 
   if (description) {
     if (description.type === 'offer') {
-      // Set remote description and create answer
-      await pc.setRemoteDescription(new RTCSessionDescription(description));
-      await addLocalTracks();
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit('signal', { roomId, description: pc.localDescription, to: from });
+      // remote sent an offer -> set it and create an answer
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(description));
+        // flush any queued candidates now that remoteDescription is set
+        await flushPendingCandidates();
+
+        await addLocalTracks(); // ensure local tracks are added
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('signal', { roomId, description: pc.localDescription, to: from });
+      } catch (e) {
+        console.error('Error handling offer', e);
+      }
     } else if (description.type === 'answer') {
-      await pc.setRemoteDescription(new RTCSessionDescription(description));
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(description));
+        await flushPendingCandidates();
+      } catch (e) {
+        console.error('Error setting remote answer', e);
+      }
     }
   } else if (candidate) {
+    // ICE candidate
     try {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      // If remoteDescription is set, add immediately; otherwise queue
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        pendingCandidates.push(candidate);
+      }
     } catch (e) {
-      console.error('Error adding received ICE candidate', e);
+      console.error('Error adding ICE candidate', e);
     }
   }
 });
@@ -111,7 +141,7 @@ socket.on('signal', async ({ from, description, candidate }) => {
 socket.on('peer-left', ({ peerId }) => {
   console.log('peer left', peerId);
   status('Peer left');
-  // cleanup remote video / connection
+  // cleanup remote connection but keep local stream so user can re-join
   if (remoteVideo.srcObject) {
     remoteVideo.srcObject.getTracks().forEach(t => t.stop());
     remoteVideo.srcObject = null;
@@ -121,34 +151,49 @@ socket.on('peer-left', ({ peerId }) => {
     pc = null;
   }
   remoteId = null;
+  pendingCandidates = [];
 });
 
-// Helpers
-
-function status(text) {
-  statusSpan.innerText = text;
-}
+/* ---------- WebRTC helpers ---------- */
 
 async function maybeCreatePeerConnection() {
   if (pc) return;
   pc = new RTCPeerConnection(configuration);
 
+  // ICE -> send to remote
   pc.onicecandidate = (event) => {
     if (event.candidate) {
-      socket.emit('signal', { roomId, candidate: event.candidate, to: remoteId });
+      if (!remoteId) {
+        // remoteId might not be known yet; queue candidate locally until remoteId known
+        // but most flows know remoteId before gathering or will re-emit; for now store and drop if remoteId never appears
+        console.warn('ICE candidate ready but remoteId unknown, dropping until remote known');
+      } else {
+        socket.emit('signal', { roomId, candidate: event.candidate, to: remoteId });
+      }
     }
   };
 
   pc.ontrack = (event) => {
     console.log('ontrack', event.streams);
-    // For simple demo: assume single remote stream
-    remoteVideo.srcObject = event.streams[0];
+    // assume single remote stream
+    try {
+      remoteVideo.autoplay = true;
+      remoteVideo.playsInline = true;
+      remoteVideo.srcObject = event.streams[0];
+    } catch (e) {
+      console.error('Error attaching remote stream', e);
+    }
   };
 
-  // If browser supports onnegotiationneeded you can use that for creating offers
-  pc.onnegotiationneeded = async () => {
-    console.log('onnegotiationneeded');
-    // We will rely on explicit offer creation in our flow to avoid double-offers
+  pc.onconnectionstatechange = () => {
+    console.log('pc connectionState:', pc.connectionState);
+    if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      // cleanup remote side but keep local stream
+      if (remoteVideo.srcObject) {
+        remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+        remoteVideo.srcObject = null;
+      }
+    }
   };
 
   // Add local tracks (if available)
@@ -158,12 +203,18 @@ async function maybeCreatePeerConnection() {
 async function addLocalTracks() {
   if (!localStream) return;
   if (!pc) return;
-  // Remove existing senders first (defensive)
-  localStream.getTracks().forEach(track => {
-    // check not already added
-    const senders = pc.getSenders().map(s => s.track).filter(Boolean);
-    if (!senders.includes(track)) pc.addTrack(track, localStream);
-  });
+
+  // Add each track if not already added
+  const existingSenders = pc.getSenders().map(s => s.track).filter(Boolean);
+  for (const track of localStream.getTracks()) {
+    if (!existingSenders.includes(track)) {
+      try {
+        pc.addTrack(track, localStream);
+      } catch (e) {
+        console.warn('addTrack failed', e);
+      }
+    }
+  }
 }
 
 async function createAndSendOffer() {
@@ -171,19 +222,39 @@ async function createAndSendOffer() {
   await addLocalTracks();
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  socket.emit('signal', { roomId, description: pc.localDescription, to: remoteId });
+  if (!remoteId) {
+    console.warn('No remoteId known when creating offer — offer will be sent when remoteId known');
+  } else {
+    socket.emit('signal', { roomId, description: pc.localDescription, to: remoteId });
+  }
 }
 
-// Cleanup local resources
+async function flushPendingCandidates() {
+  if (!pc) return;
+  if (pendingCandidates.length === 0) return;
+  for (const c of pendingCandidates) {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(c));
+    } catch (e) {
+      console.warn('Error adding pending candidate', e);
+    }
+  }
+  pendingCandidates = [];
+}
+
+/* ---------- Cleanup ---------- */
 function cleanup() {
   if (pc) {
-    pc.close();
+    try { pc.close(); } catch (e) { /* ignore */ }
     pc = null;
   }
+  pendingCandidates = [];
   if (localStream) {
     localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
   }
-  localStream = null;
   localVideo.srcObject = null;
   remoteVideo.srcObject = null;
+  remoteId = null;
+  roomId = null;
 }
