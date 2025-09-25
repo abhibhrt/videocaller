@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Simple 1-1 WebRTC</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 10px; }
+    video { width: 320px; height: 240px; background: #000; margin: 5px; }
+    #controls { margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <h2>1-to-1 Video + Voice (Node.js + WebRTC)</h2>
+
+  <div id="controls">
+    Room ID: <input id="roomId" placeholder="room1" value="room1"/>
+    <button id="joinBtn">Join</button>
+    <button id="leaveBtn" disabled>Leave</button>
+    <span id="status"></span>
+  </div>
+
+  <div>
+    <video id="localVideo" autoplay muted playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
