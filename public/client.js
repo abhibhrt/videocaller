@@ -18,6 +18,10 @@ let remoteId = null;
 // queue for ICE candidates received before remoteDescription is set
 let pendingCandidates = [];
 
+function status(msg) {
+  if (statusSpan) statusSpan.textContent = msg;
+}
+
 const configuration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' }
