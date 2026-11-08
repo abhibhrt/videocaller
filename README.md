@@ -1,6 +1,3 @@
-# Video & Voice Caller
-
-```text
 # 1-to-1 WebRTC Video & Voice Call
 
 A lightweight, mobile-first 1-to-1 peer-to-peer video and audio calling web application built with **Node.js**, **Express**, **Socket.IO**, and **WebRTC**.
@@ -21,13 +18,14 @@ A lightweight, mobile-first 1-to-1 peer-to-peer video and audio calling web appl
 
 ### System Overview
 
-+-------------------+                              +-------------------+
-|     Peer A        |                              |     Peer B        |
-|  (Mobile Browser) |                              |  (Mobile Browser) |
-+---------+---------+                              +---------+---------+
-          |                                                  |
-          |  1. Join Room / SDP Offer & Answer / ICE         |
-          +---------------------->+  +<----------------------+
+```text
++-------------------+                             +-------------------+
+|      Peer A       |                             |      Peer B       |
+| (Mobile Browser)  |                             | (Mobile Browser)  |
++---------+---------+                             +---------+---------+
+          |                                                 |
+          |  1. Join Room / SDP Offer & Answer / ICE        |
+          +---------------------->+  +<---------------------+
                                   |  |
                         +---------v--v---------+
                         |   Signaling Server   |
@@ -35,8 +33,9 @@ A lightweight, mobile-first 1-to-1 peer-to-peer video and audio calling web appl
                         +----------------------+
                                   |
           2. Direct P2P Media Stream (Audio / Video via SRTP)
-          |<================================================>|
+          |<===============================================>|
                      (STUN: stun.l.google.com:19302)
+```
 
 ### Signaling & Connection Flow
 
@@ -53,6 +52,7 @@ A lightweight, mobile-first 1-to-1 peer-to-peer video and audio calling web appl
 
 ## Project Structure
 
+```text
 ├── server.js                          # Entry point: HTTP, Express, & Socket.IO initialization
 ├── package.json                       # Dependencies & scripts
 ├── src/
@@ -74,6 +74,7 @@ A lightweight, mobile-first 1-to-1 peer-to-peer video and audio calling web appl
         ├── app.js                     # DOM bindings, screen transitions, & button actions
         ├── socket.js                  # Client Socket.IO listeners
         └── webrtc.js                  # RTCPeerConnection, ICE queue, & track toggles
+```
 
 ---
 
@@ -91,3 +92,12 @@ A lightweight, mobile-first 1-to-1 peer-to-peer video and audio calling web appl
    ```bash
    npm init -y
    npm install express socket.io
+   ```
+
+2. **Start the server:**
+   ```bash
+   node server.js
+   ```
+
+3. **Open in browser:**
+   Navigate to `http://localhost:3000` (or your HTTPS tunnel URL on mobile devices).
