@@ -2,11 +2,11 @@
 const rooms = {};
 
 const roomService = {
-  addPeerToRoom(roomName, socketId) {
+  addPeerToRoom(roomName, socketId, userName) {
     if (!rooms[roomName]) {
-      rooms[roomName] = new Set();
+      rooms[roomName] = new Map();
     }
-    rooms[roomName].add(socketId);
+    rooms[roomName].set(socketId, userName);
     return rooms[roomName].size;
   },
 
@@ -45,6 +45,13 @@ const roomService = {
 
   getRoomSize(roomName) {
     return rooms[roomName] ? rooms[roomName].size : 0;
+  },
+
+  getRoomsList() {
+    return Object.entries(rooms).map(([name, peers]) => ({
+      name,
+      count: peers.size
+    }));
   }
 };
 
