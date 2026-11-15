@@ -7,7 +7,7 @@ export class WebRTCManager {
     this.waitingPlaceholder = waitingPlaceholder;
     this.onStatusChange = onStatusChange;
 
-    // Map<peerId, { pc, pendingCandidates, tileEl, videoEl, avatarEl, name, username }>
+    // Map<socketId, { pc, pendingCandidates, tileEl, videoEl, avatarEl, name, username }>
     this.peers = new Map();
     this.localStream = null;
     this.roomName = null;
@@ -28,31 +28,32 @@ export class WebRTCManager {
   }
 
   updateGridLayout() {
-    const count = this.peers.size;
-    this.remoteVideosGrid.className = `remote-grid count-${Math.min(count, 3)}`;
-    if (count === 0) {
+    const remoteCount = this.peers.size;
+    const totalJoined = remoteCount + 1; // Includes current user
+    this.remoteVideosGrid.className = `remote-grid count-${Math.min(remoteCount, 3)}`;
+
+    if (remoteCount === 0) {
       this.waitingPlaceholder.classList.remove('hidden');
-      this.onStatusChange('Waiting for peers...');
     } else {
       this.waitingPlaceholder.classList.add('hidden');
-      this.onStatusChange(`Connected (${count + 1}/4)`);
     }
+
+    this.onStatusChange(`${totalJoined} joined`);
   }
 
-  getOrCreatePeerEntry(peerId, name = 'Peer', username = '') {
-    if (this.peers.has(peerId)) {
-      const existing = this.peers.get(peerId);
-      if (name && name !== 'Peer') existing.name = name;
+  getOrCreatePeerEntry(socketId, name = 'User', username = '') {
+    if (this.peers.has(socketId)) {
+      const existing = this.peers.get(socketId);
+      if (name && name !== 'User') existing.name = name;
       if (username) existing.username = username;
       return existing;
     }
 
     const pc = new RTCPeerConnection(this.config);
 
-    // Build video tile for this remote peer
     const tileEl = document.createElement('div');
     tileEl.className = 'remote-tile';
-    tileEl.dataset.peerId = peerId;
+    tileEl.dataset.peerId = socketId;
 
     const videoEl = document.createElement('video');
     videoEl.autoplay = true;
@@ -60,7 +61,7 @@ export class WebRTCManager {
 
     const avatarEl = document.createElement('div');
     avatarEl.className = 'audio-avatar';
-    avatarEl.textContent = (name || username || 'P')[0].toUpperCase();
+    avatarEl.textContent = (name || username || 'U')[0].toUpperCase();
 
     const labelEl = document.createElement('span');
     labelEl.className = 'video-label';
@@ -80,10 +81,9 @@ export class WebRTCManager {
       name,
       username
     };
-    this.peers.set(peerId, entry);
+    this.peers.set(socketId, entry);
     this.updateGridLayout();
 
-    // Add local tracks
     if (this.localStream) {
       for (const track of this.localStream.getTracks()) {
         pc.addTrack(track, this.localStream);
@@ -95,7 +95,7 @@ export class WebRTCManager {
         this.socket.emit('signal', {
           roomId: this.roomName,
           candidate: event.candidate,
-          to: peerId
+          to: socketId
         });
       }
     };
@@ -110,22 +110,22 @@ export class WebRTCManager {
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-        this.removePeer(peerId);
+        this.removePeer(socketId);
       }
     };
 
     return entry;
   }
 
-  async createAndSendOffer(peerId, name, username) {
-    const entry = this.getOrCreatePeerEntry(peerId, name, username);
+  async createAndSendOffer(socketId, name, username) {
+    const entry = this.getOrCreatePeerEntry(socketId, name, username);
     const offer = await entry.pc.createOffer();
     await entry.pc.setLocalDescription(offer);
 
     this.socket.emit('signal', {
       roomId: this.roomName,
       description: entry.pc.localDescription,
-      to: peerId
+      to: socketId
     });
   }
 
@@ -165,8 +165,8 @@ export class WebRTCManager {
     entry.pendingCandidates = [];
   }
 
-  removePeer(peerId) {
-    const entry = this.peers.get(peerId);
+  removePeer(socketId) {
+    const entry = this.peers.get(socketId);
     if (!entry) return;
 
     if (entry.videoEl.srcObject) {
@@ -175,7 +175,7 @@ export class WebRTCManager {
     }
     entry.pc.close();
     entry.tileEl.remove();
-    this.peers.delete(peerId);
+    this.peers.delete(socketId);
     this.updateGridLayout();
   }
 
@@ -196,12 +196,12 @@ export class WebRTCManager {
       videoTrack.enabled = !videoTrack.enabled;
       return !videoTrack.enabled;
     }
-    return true; // If audio-only call, camera remains off
+    return true;
   }
 
   cleanup() {
-    for (const peerId of Array.from(this.peers.keys())) {
-      this.removePeer(peerId);
+    for (const socketId of Array.from(this.peers.keys())) {
+      this.removePeer(socketId);
     }
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());

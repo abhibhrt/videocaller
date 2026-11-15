@@ -9,25 +9,20 @@ export function setupSocketEvents(socket, rtcManager, callbacks) {
   });
 
   socket.on('participants', ({ count }) => {
-    if (count === 1) {
-      callbacks.onStatusChange('Waiting for peers...');
-    }
+    callbacks.onStatusChange(`${count} joined`);
   });
 
   socket.on('room-full', () => {
     callbacks.onRoomFull?.();
   });
 
-  // Received by the user who just joined a room containing existing peers
   socket.on('existing-peers', async ({ peers }) => {
-    for (const peer of peers) {
-      await rtcManager.createAndSendOffer(peer.peerId, peer.name, peer.username);
+    for (const user of peers) {
+      await rtcManager.createAndSendOffer(user.peerId, user.name, user.username);
     }
   });
 
-  // Received by existing room members when a new peer joins (they will send us an offer)
   socket.on('peer-joined', ({ peerId, name, username }) => {
-    callbacks.onStatusChange(`${name || username} joined...`);
     rtcManager.getOrCreatePeerEntry(peerId, name, username);
   });
 
@@ -43,7 +38,7 @@ export function setupSocketEvents(socket, rtcManager, callbacks) {
     rtcManager.removePeer(peerId);
   });
 
-  // --- Direct 1-to-1 Call & Ringing Events ---
+  // --- Private 1-to-1 Call & Ringing Events ---
   socket.on('incoming-call', (data) => {
     callbacks.onIncomingCall?.(data);
   });
