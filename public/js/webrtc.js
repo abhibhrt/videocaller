@@ -1,115 +1,182 @@
 // public/js/webrtc.js
 export class WebRTCManager {
-  constructor(socket, localVideo, remoteVideo, onStatusChange) {
+  constructor(socket, localVideo, remoteVideosGrid, waitingPlaceholder, onStatusChange) {
     this.socket = socket;
     this.localVideo = localVideo;
-    this.remoteVideo = remoteVideo;
+    this.remoteVideosGrid = remoteVideosGrid;
+    this.waitingPlaceholder = waitingPlaceholder;
     this.onStatusChange = onStatusChange;
 
-    this.pc = null;
+    // Map<peerId, { pc, pendingCandidates, tileEl, videoEl, avatarEl, name, username }>
+    this.peers = new Map();
     this.localStream = null;
     this.roomName = null;
-    this.remoteId = null;
-    this.pendingCandidates = [];
+    this.callMode = 'video'; // 'video' | 'audio'
 
     this.config = {
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
   }
 
-  async initLocalMedia() {
+  async initLocalMedia(mode = 'video') {
+    this.callMode = mode;
     this.localStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user' },
+      video: mode === 'video' ? { facingMode: 'user' } : false,
       audio: true
     });
     this.localVideo.srcObject = this.localStream;
   }
 
-  async createPeerConnection() {
-    if (this.pc) return;
-    this.pc = new RTCPeerConnection(this.config);
+  updateGridLayout() {
+    const count = this.peers.size;
+    this.remoteVideosGrid.className = `remote-grid count-${Math.min(count, 3)}`;
+    if (count === 0) {
+      this.waitingPlaceholder.classList.remove('hidden');
+      this.onStatusChange('Waiting for peers...');
+    } else {
+      this.waitingPlaceholder.classList.add('hidden');
+      this.onStatusChange(`Connected (${count + 1}/4)`);
+    }
+  }
 
-    this.pc.onicecandidate = (event) => {
-      if (event.candidate && this.remoteId) {
+  getOrCreatePeerEntry(peerId, name = 'Peer', username = '') {
+    if (this.peers.has(peerId)) {
+      const existing = this.peers.get(peerId);
+      if (name && name !== 'Peer') existing.name = name;
+      if (username) existing.username = username;
+      return existing;
+    }
+
+    const pc = new RTCPeerConnection(this.config);
+
+    // Build video tile for this remote peer
+    const tileEl = document.createElement('div');
+    tileEl.className = 'remote-tile';
+    tileEl.dataset.peerId = peerId;
+
+    const videoEl = document.createElement('video');
+    videoEl.autoplay = true;
+    videoEl.playsInline = true;
+
+    const avatarEl = document.createElement('div');
+    avatarEl.className = 'audio-avatar';
+    avatarEl.textContent = (name || username || 'P')[0].toUpperCase();
+
+    const labelEl = document.createElement('span');
+    labelEl.className = 'video-label';
+    labelEl.textContent = username ? `${name} (@${username})` : name;
+
+    tileEl.appendChild(videoEl);
+    tileEl.appendChild(avatarEl);
+    tileEl.appendChild(labelEl);
+    this.remoteVideosGrid.appendChild(tileEl);
+
+    const entry = {
+      pc,
+      pendingCandidates: [],
+      tileEl,
+      videoEl,
+      avatarEl,
+      name,
+      username
+    };
+    this.peers.set(peerId, entry);
+    this.updateGridLayout();
+
+    // Add local tracks
+    if (this.localStream) {
+      for (const track of this.localStream.getTracks()) {
+        pc.addTrack(track, this.localStream);
+      }
+    }
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
         this.socket.emit('signal', {
           roomId: this.roomName,
           candidate: event.candidate,
-          to: this.remoteId
+          to: peerId
         });
       }
     };
 
-    this.pc.ontrack = (event) => {
-      this.remoteVideo.srcObject = event.streams[0];
-      this.onStatusChange('Connected');
+    pc.ontrack = (event) => {
+      const stream = event.streams[0];
+      videoEl.srcObject = stream;
+      const hasVideo = stream.getVideoTracks().length > 0;
+      avatarEl.classList.toggle('hidden', hasVideo);
     };
 
-    this.pc.onconnectionstatechange = () => {
-      const state = this.pc.connectionState;
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-        this.resetRemote();
-        this.onStatusChange('Peer disconnected');
+        this.removePeer(peerId);
       }
     };
 
-    this.addLocalTracks();
+    return entry;
   }
 
-  addLocalTracks() {
-    if (!this.localStream || !this.pc) return;
-    const existingSenders = this.pc.getSenders().map((s) => s.track).filter(Boolean);
-    for (const track of this.localStream.getTracks()) {
-      if (!existingSenders.includes(track)) {
-        this.pc.addTrack(track, this.localStream);
-      }
-    }
-  }
+  async createAndSendOffer(peerId, name, username) {
+    const entry = this.getOrCreatePeerEntry(peerId, name, username);
+    const offer = await entry.pc.createOffer();
+    await entry.pc.setLocalDescription(offer);
 
-  async createAndSendOffer(peerId) {
-    this.remoteId = peerId;
-    await this.createPeerConnection();
-    const offer = await this.pc.createOffer();
-    await this.pc.setLocalDescription(offer);
     this.socket.emit('signal', {
       roomId: this.roomName,
-      description: this.pc.localDescription,
-      to: this.remoteId
+      description: entry.pc.localDescription,
+      to: peerId
     });
   }
 
-  async handleSignal({ from, description, candidate }) {
-    this.remoteId = from;
-    await this.createPeerConnection();
+  async handleSignal({ from, fromName, fromUsername, description, candidate }) {
+    const entry = this.getOrCreatePeerEntry(from, fromName, fromUsername);
+    const { pc } = entry;
 
     if (description) {
       if (description.type === 'offer') {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(description));
-        await this.flushCandidates();
-        const answer = await this.pc.createAnswer();
-        await this.pc.setLocalDescription(answer);
+        await pc.setRemoteDescription(new RTCSessionDescription(description));
+        await this.flushCandidates(entry);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
         this.socket.emit('signal', {
           roomId: this.roomName,
-          description: this.pc.localDescription,
+          description: pc.localDescription,
           to: from
         });
       } else if (description.type === 'answer') {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(description));
-        await this.flushCandidates();
+        await pc.setRemoteDescription(new RTCSessionDescription(description));
+        await this.flushCandidates(entry);
       }
     } else if (candidate) {
-      if (this.pc.remoteDescription && this.pc.remoteDescription.type) {
-        await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      if (pc.remoteDescription && pc.remoteDescription.type) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } else {
-        this.pendingCandidates.push(candidate);
+        entry.pendingCandidates.push(candidate);
       }
     }
   }
 
-  async flushCandidates() {
-    for (const c of this.pendingCandidates) {
-      await this.pc.addIceCandidate(new RTCIceCandidate(c));
+  async flushCandidates(entry) {
+    for (const c of entry.pendingCandidates) {
+      await entry.pc.addIceCandidate(new RTCIceCandidate(c));
     }
-    this.pendingCandidates = [];
+    entry.pendingCandidates = [];
+  }
+
+  removePeer(peerId) {
+    const entry = this.peers.get(peerId);
+    if (!entry) return;
+
+    if (entry.videoEl.srcObject) {
+      entry.videoEl.srcObject.getTracks().forEach((t) => t.stop());
+      entry.videoEl.srcObject = null;
+    }
+    entry.pc.close();
+    entry.tileEl.remove();
+    this.peers.delete(peerId);
+    this.updateGridLayout();
   }
 
   toggleAudio() {
@@ -129,29 +196,19 @@ export class WebRTCManager {
       videoTrack.enabled = !videoTrack.enabled;
       return !videoTrack.enabled;
     }
-    return false;
-  }
-
-  resetRemote() {
-    if (this.remoteVideo.srcObject) {
-      this.remoteVideo.srcObject.getTracks().forEach((t) => t.stop());
-      this.remoteVideo.srcObject = null;
-    }
-    if (this.pc) {
-      this.pc.close();
-      this.pc = null;
-    }
-    this.remoteId = null;
-    this.pendingCandidates = [];
+    return true; // If audio-only call, camera remains off
   }
 
   cleanup() {
-    this.resetRemote();
+    for (const peerId of Array.from(this.peers.keys())) {
+      this.removePeer(peerId);
+    }
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
     }
     this.localVideo.srcObject = null;
     this.roomName = null;
+    this.updateGridLayout();
   }
 }

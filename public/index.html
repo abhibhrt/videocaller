@@ -1,46 +1,163 @@
-<!-- // public/index.html -->
+<!-- public/index.html -->
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>VideoCaller</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
+
 <body>
-  <div id="lobby" class="screen active">
+  <!-- AUTH SCREEN (Login / Register) -->
+  <div id="authScreen" class="screen active">
+    <div class="auth-card">
+      <div class="brand-header">
+        <h1>VideoCaller</h1>
+        <p>Connect via rooms, direct calls, or instant chat</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button type="button" id="tabLogin" class="auth-tab active">Login</button>
+        <button type="button" id="tabRegister" class="auth-tab">Register</button>
+      </div>
+
+      <form id="authForm" class="auth-form">
+        <div id="registerNameGroup" class="form-group hidden">
+          <label for="authNameInput">Full Name</label>
+          <input type="text" id="authNameInput" placeholder="e.g. Alex Carter" autocomplete="name" />
+        </div>
+
+        <div class="form-group">
+          <label for="authUsernameInput">Username / Internal Mail ID</label>
+          <div class="username-input-wrap domain-suffix">
+            <input type="text" id="authUsernameInput" placeholder="alex_99" autocomplete="username" required />
+            <span class="domain-tag">@closemiles.in</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="authPasswordInput">Password</label>
+          <input type="password" id="authPasswordInput" placeholder="Min. 6 characters" autocomplete="current-password"
+            required />
+        </div>
+
+        <div id="authError" class="error-text"></div>
+
+        <button type="submit" id="authSubmitBtn" class="btn primary full-width">Login</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- LOBBY SCREEN -->
+  <div id="lobby" class="screen">
     <div class="lobby-container">
-      <div class="rooms-header">
-        <h2>Active Rooms</h2>
-      </div>
-      <div id="roomsGrid" class="rooms-grid"></div>
-      <div id="lobbyStatus" class="status-text"></div>
+      <!-- Top User Bar -->
+      <header class="lobby-topbar">
+        <div class="current-user-info">
+          <span id="currentUserNameDisplay" class="user-fullname">User</span>
+          <span id="currentUsernameDisplay" class="user-handle">@username</span>
+        </div>
+        <button type="button" id="logoutBtn" class="btn secondary small">Logout</button>
+      </header>
+
+      <!-- User Search Section -->
+      <section class="lobby-section">
+        <div class="section-header">
+          <h2>Find People</h2>
+        </div>
+        <div class="search-bar-wrap">
+          <input type="text" id="userSearchInput" placeholder="Search by username..." autocomplete="off" />
+        </div>
+        <div id="searchResultsList" class="search-results"></div>
+      </section>
+
+      <!-- Active Rooms Section (Max 4) -->
+      <section class="lobby-section">
+        <div class="rooms-header">
+          <h2>Active Rooms <span class="sub-hint">(Up to 4 people)</span></h2>
+        </div>
+        <div id="roomsGrid" class="rooms-grid"></div>
+        <div id="lobbyStatus" class="status-text"></div>
+      </section>
     </div>
   </div>
 
-  <div id="nameModalOverlay" class="modal-overlay">
-    <div class="modal-card">
-      <h2>Welcome</h2>
-      <p>Please enter your name to continue</p>
-      <input type="text" id="nameModalInput" placeholder="Your name" autocomplete="off" />
-      <div class="modal-actions">
-        <button id="nameModalConfirmBtn" class="btn primary">Continue</button>
-      </div>
-    </div>
-  </div>
-
+  <!-- CREATE / JOIN ROOM MODAL -->
   <div id="modalOverlay" class="modal-overlay hidden">
     <div class="modal-card">
       <h2 id="modalTitle">Create Room</h2>
       <p id="modalDesc">Enter a name for your new room</p>
-      <input type="text" id="modalRoomInput" placeholder="e.g. standup, family-chat" autocomplete="off" />
+      <input type="text" id="modalRoomInput" placeholder="e.g. standup, squad-hangout" autocomplete="off" />
       <div class="modal-actions">
-        <button id="modalCancelBtn" class="btn secondary">Cancel</button>
-        <button id="modalConfirmBtn" class="btn primary">Join</button>
+        <button type="button" id="modalCancelBtn" class="btn secondary">Cancel</button>
+        <button type="button" id="modalConfirmBtn" class="btn primary">Join</button>
       </div>
     </div>
   </div>
 
+  <!-- DIRECT MESSAGE DRAWER / MODAL -->
+  <div id="dmModalOverlay" class="modal-overlay hidden">
+    <div class="modal-card dm-card">
+      <div class="dm-header">
+        <div class="dm-user-meta">
+          <span id="dmTargetName" class="dm-name">User</span>
+          <span id="dmTargetUsername" class="dm-handle">@user</span>
+        </div>
+        <div class="dm-header-actions">
+          <button type="button" id="dmVoiceCallBtn" class="icon-pill-btn" title="Voice Call" aria-label="Voice Call">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path
+                d="M6.62 10.79a15.05 15.05 0 006.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
+            </svg>
+          </button>
+          <button type="button" id="dmVideoCallBtn" class="icon-pill-btn" title="Video Call" aria-label="Video Call">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path
+                d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
+            </svg>
+          </button>
+          <button type="button" id="closeDmBtn" class="icon-pill-btn" title="Close" aria-label="Close">✕</button>
+        </div>
+      </div>
+
+      <div id="dmMessagesList" class="dm-messages"></div>
+
+      <form id="dmForm" class="dm-input-form">
+        <input type="text" id="dmInput" placeholder="Write a message..." autocomplete="off" />
+        <button type="submit" class="btn primary small">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- RINGING OVERLAY (Outgoing & Incoming Calls) -->
+  <div id="ringingOverlay" class="modal-overlay hidden">
+    <div class="modal-card ringing-card">
+      <div class="pulse-ring">
+        <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
+          <path
+            d="M6.62 10.79a15.05 15.05 0 006.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
+        </svg>
+      </div>
+      <h2 id="ringingTitle">Incoming Video Call</h2>
+      <p id="ringingPeerInfo">Alex (@alex_99)</p>
+      <p id="ringingSubStatus" class="ringing-sub">Ringing...</p>
+
+      <!-- Incoming Actions -->
+      <div id="incomingCallActions" class="modal-actions hidden">
+        <button type="button" id="rejectCallBtn" class="btn danger">Decline</button>
+        <button type="button" id="acceptCallBtn" class="btn success">Accept</button>
+      </div>
+
+      <!-- Outgoing Actions -->
+      <div id="outgoingCallActions" class="modal-actions hidden">
+        <button type="button" id="cancelCallBtn" class="btn danger">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CALL SCREEN (Supports 1-to-1 & Up to 4-User Mesh + On-Screen Colorful Chat) -->
   <div id="callScreen" class="screen">
     <div class="top-bar">
       <div class="top-left">
@@ -48,24 +165,37 @@
         <span id="callStatus" class="status-pill">Connecting...</span>
       </div>
       <div class="top-actions">
-        <button id="toggleChatBtn" class="icon-pill-btn" aria-label="Toggle Messages" title="Toggle Messages">
+        <button type="button" id="toggleChatBtn" class="icon-pill-btn" aria-label="Toggle Messages"
+          title="Toggle Messages">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" />
           </svg>
         </button>
-        <button id="fullscreenBtn" class="icon-pill-btn" aria-label="Toggle Fullscreen" title="Toggle Fullscreen">
+        <button type="button" id="fullscreenBtn" class="icon-pill-btn" aria-label="Toggle Fullscreen"
+          title="Toggle Fullscreen">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+            <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
           </svg>
         </button>
       </div>
     </div>
 
     <div class="video-container">
-      <video id="remoteVideo" autoplay playsinline></video>
-      <video id="localVideo" autoplay muted playsinline></video>
+      <!-- Dynamic Multi-Peer Remote Grid (1 to 3 remote peers) -->
+      <div id="remoteVideosGrid" class="remote-grid count-0">
+        <div id="waitingPlaceholder" class="waiting-placeholder">
+          <p>Waiting for others to join...</p>
+        </div>
+      </div>
+
+      <!-- Floating Local PiP -->
+      <div id="localVideoWrapper" class="local-pip-wrapper">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <span id="localVideoLabel" class="video-label">You</span>
+      </div>
     </div>
 
+    <!-- On-Screen Translucent Colorful Chat Overlay -->
     <div id="chatOverlay" class="chat-overlay hidden">
       <div id="chatMessages" class="chat-messages"></div>
     </div>
@@ -75,27 +205,30 @@
         <input type="text" id="chatInput" placeholder="Type a message..." autocomplete="off" />
         <button type="submit" class="send-btn" aria-label="Send">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
           </svg>
         </button>
       </form>
 
       <div class="bottom-controls">
-        <button id="muteAudioBtn" class="control-btn" aria-label="Mute Microphone">
+        <button type="button" id="muteAudioBtn" class="control-btn" aria-label="Mute Microphone">
           <svg id="micIcon" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
+            <path
+              d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z" />
           </svg>
         </button>
 
-        <button id="leaveBtn" class="control-btn end-call" aria-label="End Call">
+        <button type="button" id="leaveBtn" class="control-btn end-call" aria-label="End Call">
           <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
-            <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
+            <path
+              d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" />
           </svg>
         </button>
 
-        <button id="muteVideoBtn" class="control-btn" aria-label="Toggle Camera">
+        <button type="button" id="muteVideoBtn" class="control-btn" aria-label="Toggle Camera">
           <svg id="camIcon" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-            <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+            <path
+              d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
           </svg>
         </button>
       </div>
@@ -105,4 +238,5 @@
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
+
 </html>
