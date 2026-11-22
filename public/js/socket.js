@@ -1,5 +1,12 @@
 // public/js/socket.js
 export function setupSocketEvents(socket, rtcManager, callbacks) {
+  // Re-sync room membership automatically if mobile Chrome briefly lost socket connection
+  socket.on('connect', () => {
+    if (rtcManager.roomName) {
+      socket.emit('join', { roomName: rtcManager.roomName });
+    }
+  });
+
   socket.on('rooms-list', (rooms) => {
     callbacks.onRoomsUpdate?.(rooms);
   });

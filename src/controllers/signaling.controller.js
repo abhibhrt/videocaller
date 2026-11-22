@@ -3,9 +3,18 @@ const roomService = require('../services/room.service');
 const Message = require('../models/Message');
 const { EVENTS, MAX_ROOM_SIZE } = require('../utils/constants');
 
+// Grace timers for brief mobile background disconnects: Map<username, Timeout>
+const disconnectTimers = new Map();
+
 const signalingController = {
   handleConnection(io, socket) {
     const { username, name } = socket.user;
+
+    // Cancel any pending disconnect grace timer if user reconnected quickly
+    if (disconnectTimers.has(username)) {
+      clearTimeout(disconnectTimers.get(username));
+      disconnectTimers.delete(username);
+    }
 
     // Register user online
     roomService.registerOnlineUser(username, name, socket.id);
@@ -21,12 +30,20 @@ const signalingController = {
       const roomName = typeof payload === 'string' ? payload : payload.roomName;
       if (!roomName) return;
 
+      // Clean up any stale entry for this same username in the room (e.g., after mobile reconnect)
+      const existingPeersInRoom = roomService.getRoomPeers(roomName, socket.id);
+      for (const p of existingPeersInRoom) {
+        if (p.username === username) {
+          roomService.removePeerFromRoom(roomName, p.peerId);
+          socket.to(roomName).emit(EVENTS.PEER_LEFT, { peerId: p.peerId, username });
+        }
+      }
+
       if (roomService.getRoomSize(roomName) >= MAX_ROOM_SIZE) {
         socket.emit(EVENTS.ROOM_FULL);
         return;
       }
 
-      // Get peers already in the room BEFORE adding the new peer
       const existingPeers = roomService.getRoomPeers(roomName, socket.id);
 
       socket.join(roomName);
@@ -35,10 +52,8 @@ const signalingController = {
       const roomSize = roomService.addPeerToRoom(roomName, socket.id, { name, username });
       roomService.setUserCallStatus(username, true);
 
-      // Tell the joining user who is already there so they can send offers to each
       socket.emit(EVENTS.EXISTING_PEERS, { peers: existingPeers });
 
-      // Notify existing peers that a new peer joined
       socket.to(roomName).emit(EVENTS.PEER_JOINED, {
         peerId: socket.id,
         name,
@@ -49,7 +64,7 @@ const signalingController = {
       io.emit(EVENTS.ROOMS_LIST, roomService.getRoomsList());
     });
 
-    // --- WebRTC Signaling (Mesh-aware via `to`) ---
+    // --- WebRTC Signaling (Supports SDP Offer/Answer, ICE Restart, & Candidates) ---
     socket.on(EVENTS.SIGNAL, ({ roomId, description, candidate, to }) => {
       const payload = {
         from: socket.id,
@@ -91,14 +106,13 @@ const signalingController = {
         return;
       }
 
-      // Generate a private room ID for this 1-to-1 call
       const privateRoom = `dm_call_${[username, target.username].sort().join('_')}_${Date.now()}`;
 
       io.to(target.socketId).emit(EVENTS.INCOMING_CALL, {
         fromUsername: username,
         fromName: name,
         fromSocketId: socket.id,
-        callType: callType || 'video', // 'video' | 'audio'
+        callType: callType || 'video',
         roomName: privateRoom
       });
     });
@@ -128,7 +142,7 @@ const signalingController = {
       }
     });
 
-    // --- Direct 1-to-1 Text Messaging (Persisted in MongoDB) ---
+    // --- Direct 1-to-1 Text Messaging ---
     socket.on(EVENTS.DIRECT_MESSAGE, async ({ targetUsername, text }) => {
       if (!targetUsername || !text || !text.trim()) return;
       const cleanTarget = targetUsername.toLowerCase();
@@ -149,10 +163,8 @@ const signalingController = {
           createdAt: saved.createdAt
         };
 
-        // Echo back to sender
         socket.emit(EVENTS.DIRECT_MESSAGE, msgPayload);
 
-        // Deliver to recipient if online
         const target = roomService.getOnlineUser(cleanTarget);
         if (target) {
           io.to(target.socketId).emit(EVENTS.DIRECT_MESSAGE, msgPayload);
@@ -162,7 +174,7 @@ const signalingController = {
       }
     });
 
-    // --- Leave Room ---
+    // --- Explicit Leave Room ---
     socket.on(EVENTS.LEAVE, (roomName) => {
       socket.leave(roomName);
       socket.data.roomName = null;
@@ -174,19 +186,26 @@ const signalingController = {
       io.emit(EVENTS.ROOMS_LIST, roomService.getRoomsList());
     });
 
-    // --- Disconnect ---
+    // --- Disconnect with 15s Grace Period for Mobile Backgrounding ---
     socket.on('disconnect', () => {
-      roomService.unregisterOnlineUser(username, socket.id);
-      io.emit(EVENTS.ONLINE_USERS, roomService.getOnlineUsernames());
+      const staleSocketId = socket.id;
 
-      const affectedRooms = roomService.removePeerGlobally(socket.id);
-      for (const { roomName, roomSize } of affectedRooms) {
-        socket.to(roomName).emit(EVENTS.PEER_LEFT, { peerId: socket.id, username });
-        io.in(roomName).emit(EVENTS.PARTICIPANTS, { count: roomSize });
-      }
-      if (affectedRooms.length > 0) {
-        io.emit(EVENTS.ROOMS_LIST, roomService.getRoomsList());
-      }
+      const timer = setTimeout(() => {
+        disconnectTimers.delete(username);
+        roomService.unregisterOnlineUser(username, staleSocketId);
+        io.emit(EVENTS.ONLINE_USERS, roomService.getOnlineUsernames());
+
+        const affectedRooms = roomService.removePeerGlobally(staleSocketId);
+        for (const { roomName, roomSize } of affectedRooms) {
+          socket.to(roomName).emit(EVENTS.PEER_LEFT, { peerId: staleSocketId, username });
+          io.in(roomName).emit(EVENTS.PARTICIPANTS, { count: roomSize });
+        }
+        if (affectedRooms.length > 0) {
+          io.emit(EVENTS.ROOMS_LIST, roomService.getRoomsList());
+        }
+      }, 15000);
+
+      disconnectTimers.set(username, timer);
     });
   }
 };

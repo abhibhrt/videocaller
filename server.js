@@ -9,7 +9,12 @@ const indexRouter = require('./src/routes/index.routes');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+
+const io = new Server(server, {
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling']
+});
 
 app.use(express.json());
 app.use(express.static('public'));
